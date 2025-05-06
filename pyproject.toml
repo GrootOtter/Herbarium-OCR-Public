@@ -1,0 +1,75 @@
+# pyproject.toml
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "herbarium-ocr"
+version = "0.1.0"
+authors = [
+  { name="Esen Zhou", email="zhouyixin231@mails.ucas.ac.cn" },
+]
+description = "OCR tool for Central Eurasian botanical documents and labels using layout analysis and LLMs/APIs."
+readme = "README.en.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+keywords = ["ocr", "botany", "llm", "document analysis"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Text Processing :: General",
+    "Topic :: Utilities",
+]
+
+dependencies = [
+    "opencv-python-headless>=4.11.0.86",
+    "Pillow>=10.4.0",
+    "numpy>=2.2.5",
+    "tqdm>=4.67.0",
+    "PyMuPDF>=1.25.5",
+    "requests>=2.20.0",
+    "openai>=1.75.0",
+    "doclayout_yolo==0.0.3",
+    "huggingface_hub>=0.30.2",
+    "toml>=0.10.2",
+]
+
+[project.optional-dependencies]
+full = ["pytesseract>=0.3.10",
+        "requests>=2.20.0",
+        "surya-ocr>=0.13.1"]
+
+dev = [
+    "pytest",
+    "flake8",
+    "black",
+]
+
+[project.scripts]
+herbarium-ocr = "Main.herbarium_ocr:main"
+herbarium-ocr-convert = "Main.convert:main"
+herbarium-ocr-preprocess = "Main.image_processer:main_test"
+herbarium-ocr-check-layout = "Main.check_layout_model:main_check"
+
+[project.urls]
+"Homepage" = "https://gitee.com/esenzhou/Herbarium-OCR-Public"
+"Bug Tracker" = "https://gitee.com/esenzhou/Herbarium-OCR-Public/issues"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["Main*", "ocr_clients*", "output_generators*"]
+
+[tool.setuptools.package-data]
+"Main" = ["layout_models/*.pt"]

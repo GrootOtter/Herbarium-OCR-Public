@@ -1,0 +1,39 @@
+# Core dependencies
+opencv-python-headless>=4.11.0.86
+Pillow>=10.4.0
+numpy>=2.2.5
+tqdm>=4.67.0
+PyMuPDF>=1.25.5 # Provides fitz
+
+
+# LLM dependencies
+openai>=1.75.0
+
+# Dependencies for DocLayout-YOLO and related utilities
+doclayout_yolo==0.0.3
+huggingface_hub>=0.30.2 # Required by doclayout_yolo for model download
+
+# Configuration File Parsing
+toml>=0.10.2 # Added for TOML config file support
+
+# --- PyTorch ---
+# Base PyTorch and Torchvision.
+# IMPORTANT: For GPU (CUDA) support, you MUST install the correct CUDA-enabled
+# versions separately AFTER installing from this file. See README for instructions.
+# Example: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+torch>=2.6.0
+torchvision>=0.21.0
+
+# --- Optional Dependencies ---
+
+# For Auto-Rotation feature (if attempt_auto_rotation=True in config.py):
+# pip install pytesseract
+# pytesseract>=0.3.13
+
+# For XFYun HTTP OCR Client
+# pip install requests
+# requests>=2.20.0 
+
+# For Surya OCR Client
+# pip install surya-ocr
+# surya-ocr>=0.13.1
