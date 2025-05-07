@@ -16,14 +16,15 @@ The workflow includes:
 - **XFYun OCR Services** via HTTP API (OCR technology provided by iFlytek):
   - **General Text Recognition** (`xfyun-general-ocr`): Supports Chinese/English ([API Doc](https://www.xfyun.cn/doc/words/universal_character_recognition/API.html) - Chinese).
   - **Printed Text Recognition (Multilingual)** (`xfyun-printed-ocr`): Supports various languages ([API Doc](https://www.xfyun.cn/doc/words/multi_print_recognition/API.html) - Chinese).  
-    (**Note**: XFYun integration is not extensively tested and may require paid quotas).
+    (**Note**: XFYun integration is not extensively tested and requires paid quotas).
 - **Local OCR Engine**:
-    *   **Surya OCR** (`surya-ocr`): A Torch-based OCR engine ([GitHub](https://github.com/VikParuchuri/surya)). The current integration requires approximately **7GB of VRAM per process** for layout+OCR. Please check your CUDA device specifications before use.
+  - **Surya OCR** (`surya-ocr`): A Torch-based OCR engine ([GitHub](https://github.com/VikParuchuri/surya)). The current integration requires approximately **7GB of VRAM per process** for layout+OCR. Please check your CUDA device specifications before use.
     (**Note**: Local OCR integration is not extensively tested).
 
 **Image Preprocessing Features** (Configurable):
 - **Auto-Rotation**: Corrects image orientation using Tesseract OCR (requires Tesseract). Disabled by default.
 - **Image Enhancement**: Applies contrast enhancement, denoising (color or grayscale mode), and sharpening to cropped text blocks. Disabled by default.
+- The project provides a separate preprocessing entry point: `herbarium-ocr-preprocess` (or `python -m Main.image_processer` when running from source). This tool can apply the **full preprocessing pipeline** (including optional auto-rotation and all enhancement steps, behavior depends on the configuration file) to a single file or an entire directory of files. **Note**: Preprocessing many or high-resolution full images can be time-consuming. The processed files are saved under the input path for subsequent OCR with the main script.
 
 **Output Formats**: Supports Markdown, JSON, XML, and HTML. By default, only a `full.json` file containing all details is generated. Other formats can be requested via the `--output_format` argument.
 
@@ -65,6 +66,7 @@ pip install "herbarium-ocr[full]"
 
 ### Installation from Source 
 Clone the repository if you need to contribute or use the latest development version:
+
 From Gitee:
 ```bash
 git clone https://gitee.com/esenzhou/Herbarium-OCR-Public.git
@@ -81,7 +83,7 @@ Install dependencies (ideally in a virtual environment):
 pip install -r requirements.txt
 ```
 
-To enable auto-rotation:
+Install optional dependencies (e.g., To enable auto-rotation):
 ```bash
 pip install pytesseract
 # Also install the Tesseract OCR engine itself (see below)
@@ -251,7 +253,7 @@ DOCLAYOUT_CONF_THRESHOLD = 0.25
 **API Key/Credential Setup (Environment Variables)**:
 * **OpenAI-Compatible Models**:
 
-* Obtain the corresponding API keys from the respective LLM provider’s website. This project accesses the following models (`--model` parameter):
+* Obtain the corresponding API keys from the respective LLM provider’s website. Before using this project, you can send a text image to test if the model supports it. This project accesses the following models (`--model` parameter):
 
   - [gemini](https://ai.google.dev/gemini-api/docs) `gemini-2.0-flash`
   - [grok](https://docs.x.ai/docs/overview) `grok-2-vision-1212`

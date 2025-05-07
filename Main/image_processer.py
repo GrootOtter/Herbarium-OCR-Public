@@ -5,11 +5,12 @@ import numpy as np
 from PIL import Image, UnidentifiedImageError, ImageOps # Ensure ImageOps is imported
 import os
 import logging
+from tqdm import tqdm
 import argparse
 import fitz
 import io
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 import time
 import sys
 from .config import load_configuration, OCR_CONFIG as DEFAULT_OCR_CONFIG
@@ -179,6 +180,91 @@ class ImageProcessor:
             logger.error(f"Error during sharpening: {e}", exc_info=True)
             return image # Return original on error
 
+# --- Helper function for main_test to process a single file ---
+def _process_single_file(
+    input_file_path: Path,
+    output_dir_for_file: Path,
+    processor: ImageProcessor,
+    app_config: Dict,
+    is_batch_run: bool
+) -> bool:
+    """
+    Processes a single image or PDF file for the test script.
+    Applies rotation attempt and all configured enhancements.
+    Saves output to output_dir_for_file.
+    """
+    base_filename = input_file_path.stem
+    output_filename_stem = base_filename if is_batch_run else f"{base_filename}_preprocessed_test"
+    file_ext = input_file_path.suffix.lower()
+    processed_output_path_str = ""
+    file_processed_successfully = False
+    start_time_file = time.time()
+
+    logger.info(f"Test processing: {input_file_path} -> {output_dir_for_file / output_filename_stem}.<ext>")
+
+    ocr_cfg_for_test = app_config.get('OCR_CONFIG', {})
+    # Respect denoise_mode from the loaded config for the test
+    denoise_mode_for_test = ocr_cfg_for_test.get("denoise_mode", DEFAULT_OCR_CONFIG.get("denoise_mode", "gray"))
+    do_contrast_test = ocr_cfg_for_test.get('enhance_contrast', True) # Assume test applies if key exists and True
+    do_denoise_test = ocr_cfg_for_test.get('denoise', True)
+    do_sharpen_test = ocr_cfg_for_test.get('sharpen', True)
+
+
+    if file_ext in ['.pdf', '.djvu']:
+        output_path = output_dir_for_file / (output_filename_stem + ".pdf")
+        output_doc = fitz.open(); doc = None
+        try:
+            doc = fitz.open(str(input_file_path))
+            dpi = ocr_cfg_for_test.get("dpi", DEFAULT_OCR_CONFIG.get("dpi",300))
+            mat = fitz.Matrix(dpi/72, dpi/72)
+            for page_num in range(len(doc)):
+                logger.debug(f"  Processing test page {page_num + 1}/{len(doc)} of {input_file_path.name}...")
+                page = doc.load_page(page_num); pix = page.get_pixmap(matrix=mat, alpha=False); img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+                current_img = processor.auto_rotate_image(img, app_config) # Attempt rotation
+                logger.debug(f"  Applying enhancements for test page (Contrast:{do_contrast_test}, Denoise:{do_denoise_test} (mode:{denoise_mode_for_test}), Sharpen:{do_sharpen_test})...")
+                if do_contrast_test: current_img = processor.enhance_contrast(current_img)
+                if do_denoise_test:
+                    if denoise_mode_for_test == "color": current_img = processor.denoise_image_color(current_img)
+                    elif denoise_mode_for_test == "gray": current_img = processor.denoise_image_gray(current_img)
+                    else: logger.warning(f"Unknown denoise_mode '{denoise_mode_for_test}' in test. Skipping denoise.")
+                if do_sharpen_test: current_img = processor.sharpen_image(current_img)
+
+                img_bytes_io = io.BytesIO(); current_img.save(img_bytes_io, format='PNG'); img_bytes_io.seek(0)
+                page_rect = fitz.Rect(0, 0, current_img.width, current_img.height)
+                new_page = output_doc.new_page(width=page_rect.width, height=page_rect.height)
+                new_page.insert_image(page_rect, stream=img_bytes_io.read())
+            if len(output_doc) > 0: output_doc.save(str(output_path)); processed_output_path_str = str(output_path)
+        except Exception as e: logger.error(f"Error processing PDF/DjVu {input_file_path.name}: {e}", exc_info=True)
+        finally:
+            if doc: doc.close()
+            if output_doc: output_doc.close()
+    elif file_ext in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif']:
+        output_path = output_dir_for_file / (output_filename_stem + ".png")
+        try:
+            img = Image.open(input_file_path); img = ImageOps.exif_transpose(img); img_rgb = img.convert("RGB")
+            current_img = processor.auto_rotate_image(img_rgb, app_config) # Attempt rotation
+            logger.info(f"Applying enhancements for test image (Contrast:{do_contrast_test}, Denoise:{do_denoise_test} (mode:{denoise_mode_for_test}), Sharpen:{do_sharpen_test})...")
+            if do_contrast_test: current_img = processor.enhance_contrast(current_img)
+            if do_denoise_test:
+                if denoise_mode_for_test == "color": current_img = processor.denoise_image_color(current_img)
+                elif denoise_mode_for_test == "gray": current_img = processor.denoise_image_gray(current_img)
+                else: logger.warning(f"Unknown denoise_mode '{denoise_mode_for_test}' in test. Skipping denoise.")
+            if do_sharpen_test: current_img = processor.sharpen_image(current_img)
+            current_img.save(str(output_path), format="PNG")
+            processed_output_path_str = str(output_path)
+        except Exception as e: logger.error(f"Failed processing image {input_file_path.name}: {e}", exc_info=True)
+    else:
+        logger.warning(f"Unsupported file type for testing: {input_file_path.name}")
+        return False
+
+    if processed_output_path_str:
+        logger.info(f"Test output for {input_file_path.name} saved to: {processed_output_path_str} (took {time.time() - start_time_file:.2f}s)")
+        file_processed_successfully = True
+    else:
+        logger.warning(f"Test did not produce an output for {input_file_path.name}")
+    return file_processed_successfully
+
 # --- Testing Function ---
 def main_test():
     """Entry point for testing the image preprocessing pipeline via command line."""
@@ -200,99 +286,68 @@ def main_test():
          logging.getLogger().setLevel(log_level)
     logger.setLevel(log_level) 
 
-    input_p = Path(args.input).resolve() # Resolve input path
-    if not input_p.is_file():
-        logger.critical(f"Input file not found: {args.input}")
-        sys.exit(1)
+    input_p = Path(args.input).resolve()
 
-    # Determine output path (next to input file)
-    output_dir = input_p.parent
-    base_filename = input_p.stem
-    output_base_name = f"{base_filename}_preprocessed_test"
-
-    try:
-        output_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        logger.critical(f"Failed ensure output dir '{output_dir}': {e}")
-        sys.exit(1)
-
-    logger.info("--- Starting Preprocessing Test ---")
-    # Load config primarily to get Tesseract path if set by user
+    logger.info("--- Starting Preprocessing Test/Utility ---")
     try:
         app_config = load_configuration(custom_config_path=args.config)
     except Exception as cfg_err:
-        logger.error(f"Failed to load config: {cfg_err}. Tesseract path might be incorrect if not in PATH.", exc_info=True)
-        # Use default OCR_CONFIG as fallback if loading fails
+        logger.error(f"Failed to load config: {cfg_err}. Using defaults for OCR_CONFIG.", exc_info=True)
         app_config = {'OCR_CONFIG': copy.deepcopy(DEFAULT_OCR_CONFIG)}
 
-    # Initialize Tesseract (always attempted in test)
-    logger.info("NOTE: Test function always attempts Tesseract initialization.")
+    logger.info("NOTE: This utility always attempts Tesseract initialization for rotation capability check.")
     _initialize_tesseract(app_config)
     if not TESSERACT_AVAILABLE:
-        logger.warning("Tesseract initialization failed/skipped. Rotation will not be applied in test output.")
+        logger.warning("Tesseract init failed/skipped. Rotation will not be applied in outputs.")
 
     processor = ImageProcessor()
-    file_ext = input_p.suffix.lower()
+    files_to_process: List[Path] = []
+    output_directory_base: Path
+    # Hardcoded output subdirectory name for batch mode
+    batch_output_subdir_name = "herbariumOCR_preprocessed"
 
-    try:
-        processed_output = None
-        start_time = time.time()
+    if input_p.is_file():
+        files_to_process.append(input_p)
+        output_directory_base = input_p.parent # Output next to single input file
+        logger.info(f"Single file mode. Output directory: {output_directory_base}")
+    elif input_p.is_dir():
+        output_directory_base = input_p / batch_output_subdir_name # Use fixed name
+        logger.info(f"Batch mode. Scanning directory: {input_p}")
+        logger.info(f"Batch output will be in: {output_directory_base}")
+        try:
+            output_directory_base.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            logger.critical(f"Failed to create batch output directory '{output_directory_base}': {e}")
+            sys.exit(1)
+        supported_extensions = {'.pdf', '.djvu', '.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif'}
+        for item in input_p.iterdir():
+            if item.is_file() and item.suffix.lower() in supported_extensions:
+                files_to_process.append(item)
+        if not files_to_process:
+            logger.warning(f"No supported files found in directory: {input_p}"); sys.exit(0)
+        logger.info(f"Found {len(files_to_process)} files for batch preprocessing.")
+    else:
+        logger.critical(f"Input path is not a valid file or directory: {args.input}"); sys.exit(1)
 
-        if file_ext in ['.pdf', '.djvu']:
-            output_path = output_dir / (output_base_name + ".pdf")
-            logger.info(f"Processing document '{args.input}' -> '{output_path}'")
-            # ... (Keep PDF processing logic from previous version, using app_config for DPI/Tesseract) ...
-            output_doc = fitz.open(); doc = None
-            try:
-                doc = fitz.open(str(input_p)); dpi = app_config.get('OCR_CONFIG',{}).get("dpi", 300); mat = fitz.Matrix(dpi/72, dpi/72)
-                for page_num in range(len(doc)):
-                    logger.debug(f"  Processing test page {page_num + 1}/{len(doc)}...")
-                    page = doc.load_page(page_num); pix = page.get_pixmap(matrix=mat, alpha=False); img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                    rotated_img = processor.auto_rotate_image(img, app_config) # Attempt rotation
-                    processed_page_img = rotated_img
-                    logger.debug("  Applying ALL enhancement steps (default gray denoise) for test page...")
-                    processed_page_img = processor.enhance_contrast(processed_page_img)
-                    processed_page_img = processor.denoise_image_gray(processed_page_img) # Use gray for speed test
-                    processed_page_img = processor.sharpen_image(processed_page_img)
-                    try:
-                        img_bytes = io.BytesIO(); processed_page_img.save(img_bytes, format='PNG'); img_bytes.seek(0)
-                        page_rect = fitz.Rect(0, 0, processed_page_img.width, processed_page_img.height)
-                        new_page = output_doc.new_page(width=page_rect.width, height=page_rect.height)
-                        new_page.insert_image(page_rect, stream=img_bytes.read())
-                    except Exception as insert_err: logger.error(f"Error inserting test page {page_num + 1}: {insert_err}", exc_info=True)
-            finally:
-                 if doc: doc.close()
-            if len(output_doc) > 0: output_doc.save(str(output_path)); processed_output = output_path; logger.info(f"Test PDF with {len(output_doc)} pages saved.")
-            else: logger.warning("No pages added to test PDF.")
-            output_doc.close()
+    overall_start_time = time.time()
+    success_count = 0; fail_count = 0
 
-        elif file_ext in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif']:
-            output_path = output_dir / (output_base_name + ".png")
-            logger.info(f"Processing image '{args.input}' -> '{output_path}'")
-            try:
-                img = Image.open(str(input_p))
-                img = ImageOps.exif_transpose(img) # Apply EXIF
-                img_rgb = img.convert("RGB")
-                rotated_img = processor.auto_rotate_image(img_rgb, app_config) # Attempt rotation
-                processed_img = rotated_img
-                logger.info("Applying ALL enhancement steps (default gray denoise) for test...")
-                processed_img = processor.enhance_contrast(processed_img)
-                processed_img = processor.denoise_image_gray(processed_img) # Use gray for speed test
-                processed_img = processor.sharpen_image(processed_img)
-                processed_img.save(str(output_path), format="PNG")
-                processed_output = output_path
-            except Exception as e: logger.error(f"Failed processing test image '{args.input}': {e}", exc_info=True)
+    for file_path in tqdm(files_to_process, desc="Preprocessing Files", unit="file", disable=len(files_to_process) <= 1 or logger.level > logging.INFO) :
+        if _process_single_file(
+            file_path,
+            output_directory_base,
+            processor,
+            app_config,
+            is_batch_run=input_p.is_dir()
+        ):
+            success_count +=1
         else:
-            logger.warning(f"Unsupported file type for testing: {file_ext}")
+            fail_count +=1
 
-        if processed_output: logger.info(f"Test finished in {time.time() - start_time:.3f}s. Output: {processed_output}")
-        else: logger.warning(f"Test did not produce output for {args.input}.")
-    except Exception as e:
-        logger.error(f"Error during preprocess_test '{args.input}': {e}", exc_info=True)
-    finally:
-        logger.info("--- Finished Preprocessing Test ---")
+    logger.info(f"--- Preprocessing Test/Utility Finished in {time.time() - overall_start_time:.2f}s ---")
+    logger.info(f"Total files processed: {len(files_to_process)}. Succeeded: {success_count}. Failed: {fail_count}.")
+    if fail_count > 0:
+        sys.exit(1)
 
-# --- Standard Python Entry Point ---
-# This now calls the main_test function if the script is run directly
 if __name__ == "__main__":
     main_test()

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "herbarium-ocr"
-version = "0.1.1"
+version = "0.2.0"
 authors = [
   { name="Esen Zhou", email="zhouyixin231@mails.ucas.ac.cn" },
 ]

@@ -441,19 +441,31 @@ def process_single_file_worker(
         input_path_obj = Path(input_path_str)
         file_ext = input_path_obj.suffix.lower()
         if file_ext in ['.pdf', '.djvu']:
-             doc = fitz.open(input_path_str)
-             worker_logger.debug(f"Processing PDF '{os.path.basename(input_path_str)}' ({len(doc)} pages).")
-             for page_num in range(len(doc)):
-                 page = None
-                 try:
-                     page = doc.load_page(page_num)
-                     dpi = ocr_cfg.get("dpi", 300); mat = fitz.Matrix(dpi/72, dpi/72); pix = page.get_pixmap(matrix=mat, alpha=False); img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                     rotated_img = image_processor.auto_rotate_image(img, app_config) if attempt_rotation else img
-                     # Pass target_device to page processor
-                     all_results.extend(process_pdf_page(page, page_num + 1, doclayout_model, languages, apply_enhancements_worker, active_ocr_client, app_config, rotated_img, target_device, shared_limiter_state, limiter_lock))
-                 except Exception as page_err: worker_logger.error(f"Error processing page {page_num+1}: {page_err}", exc_info=True); all_results.append({"page": page_num + 1, "error": f"Page fail: {page_err}"})
-                 finally: del page
-             doc.close()
+            doc = fitz.open(input_path_str)
+            total_pages = len(doc)
+            worker_logger.info(f"Starting PDF '{os.path.basename(input_path_str)}' ({total_pages} pages).")
+            for page_num in range(total_pages):
+                page = None
+                # Add a more prominent log for each page start in the worker
+                worker_logger.info(f"  Processing page {page_num + 1}/{total_pages} of {os.path.basename(input_path_str)}...")
+                try:
+                    page = doc.load_page(page_num)
+                    dpi = ocr_cfg.get("dpi", 300); mat = fitz.Matrix(dpi/72, dpi/72)
+                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    rotated_img = image_processor.auto_rotate_image(img, app_config) if attempt_rotation else img
+                    all_results.extend(process_pdf_page(
+                        page, page_num + 1, doclayout_model, languages,
+                        apply_enhancements_worker, active_ocr_client, app_config,
+                        rotated_img, target_device, shared_limiter_state, limiter_lock
+                    ))
+                except Exception as page_err:
+                    worker_logger.error(f"Error processing page {page_num+1} of {input_path_str}: {page_err}", exc_info=True)
+                    all_results.append({"page": page_num + 1, "error": f"Page fail: {page_err}"})
+                finally:
+                    del page # Clean up page object
+            doc.close()
+            worker_logger.info(f"Finished all pages for PDF '{os.path.basename(input_path_str)}'.")
         elif file_ext in ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.tif']:
              # Pass target_device to image processor
              all_results = process_single_image(input_path_str, doclayout_model, languages, apply_enhancements_worker, attempt_rotation, active_ocr_client, app_config, target_device, shared_limiter_state, limiter_lock)
