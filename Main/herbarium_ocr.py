@@ -41,6 +41,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__) # Logger specific to this main script module
 
+# --- Set Multiprocessing Start Method (CRUCIAL for CUDA in batch mode) ---
+# This needs to be done at the module level, before any pools are created,
+# to ensure it takes effect when the script is run via an entry point.
+if sys.platform.startswith('linux') or sys.platform.startswith('darwin'):
+    current_method = multiprocessing.get_start_method(allow_none=True)
+    if current_method != 'spawn': # Only set if not already spawn or if it's fork
+       try:
+           multiprocessing.set_start_method('spawn', force=True)
+           # Use a temporary logger for this early message if main logger isn't fully set
+           logging.getLogger("startup").debug("Set multiprocessing start method to 'spawn'.")
+       except (RuntimeError, ValueError) as e:
+            logging.getLogger("startup").warning(
+                f"Could not force multiprocessing start_method to 'spawn': {e}. "
+                f"Current method: '{current_method}'. CUDA in batch mode might fail."
+            )
+elif sys.platform.startswith('win'):
+    # On Windows, 'spawn' is default. Setting explicitly for consistency.
+    current_method = multiprocessing.get_start_method(allow_none=True)
+    if current_method != 'spawn':
+        try:
+            multiprocessing.set_start_method('spawn', force=True)
+            logging.getLogger("startup").debug("Set multiprocessing start method to 'spawn' on Windows.")
+        except Exception as e:
+            logging.getLogger("startup").warning(
+                f"Could not set start_method to 'spawn' on Windows: {e}. Using default '{current_method}'."
+            )
+# --- End Multiprocessing Start Method Setup ---
+
 # --- Global State ---
 # These are set during runtime in the main() function or workers
 MODEL_CHOICE: Optional[str] = None        # Holds the user-selected model name
@@ -748,11 +776,4 @@ def main():
 
 # --- Standard Python Entry Point ---
 if __name__ == "__main__":
-    # Set start method for multiprocessing BEFORE creating pool
-    # Crucial for CUDA compatibility on Linux/macOS
-    if sys.platform.startswith('linux') or sys.platform.startswith('darwin'):
-        current_method = multiprocessing.get_start_method(allow_none=True)
-        if current_method != 'spawn':
-           try: multiprocessing.set_start_method('spawn', force=True); logger.debug("Set multiprocessing start method to 'spawn'.")
-           except (RuntimeError, ValueError) as e: logger.warning(f"Could not force start_method to 'spawn': {e}. Using default '{current_method}'. CUDA in batch mode might fail.")
     main()
