@@ -1,4 +1,13 @@
 # Main/config.py
+import copy
+import logging
+import os
+from pathlib import Path
+from typing import Dict, Optional
+import toml # Add toml import here
+
+logger = logging.getLogger(__name__)
+
 # Default configuration values for Herbarium-OCR
 
 # --- Default Constants for Image Processing ---
@@ -169,3 +178,74 @@ MODEL_CONFIGS = {
     },
     
 }
+
+# --- Configuration Loading Functions ---
+def deep_merge(source: Dict, destination: Dict) -> Dict:
+    """Recursively merges source dict into destination dict."""
+    for key, value in source.items():
+        if isinstance(value, dict):
+            node = destination.setdefault(key, {})
+            if isinstance(node, dict):
+                deep_merge(value, node)
+            else:
+                 destination[key] = copy.deepcopy(value)
+        else:
+            destination[key] = value
+    return destination
+
+def load_configuration(custom_config_path: Optional[str] = None) -> Dict:
+    """Loads default config and merges user settings from TOML file."""
+    # Start with deep copies of defaults defined in this module
+    config = {
+        "DOCLAYOUT_CONFIG": copy.deepcopy(DOCLAYOUT_CONFIG),
+        "OCR_CONFIG": copy.deepcopy(OCR_CONFIG),
+        "MODEL_CONFIGS": copy.deepcopy(MODEL_CONFIGS)
+    }
+    logger.debug("Loaded default configuration structure from config.py.")
+
+    config_filename = "herbarium_ocr_config.toml"
+    search_paths = []
+
+    # 1. Command-line path
+    if custom_config_path:
+        cmd_path = Path(custom_config_path).resolve()
+        if cmd_path.is_file():
+            search_paths.append(cmd_path)
+            logger.debug(f"Added command line config path: {cmd_path}")
+        else:
+            logger.warning(f"--config file specified but not found: {custom_config_path}")
+
+    # 2. User config paths
+    user_config_dir_unix = Path.home() / ".config" / "herbarium-ocr"
+    if user_config_dir_unix.parent.exists(): search_paths.append(user_config_dir_unix / config_filename)
+    appdata_path = os.getenv('APPDATA')
+    if appdata_path:
+        user_config_dir_windows = Path(appdata_path) / "HerbariumOCR"
+        if user_config_dir_windows.parent.exists(): search_paths.append(user_config_dir_windows / config_filename)
+
+    # Deduplicate search paths
+    unique_search_paths = []; seen_paths = set()
+    for p in search_paths:
+        if p not in seen_paths: unique_search_paths.append(p); seen_paths.add(p)
+    logger.debug(f"Effective config search paths: {unique_search_paths}")
+
+    # Load the first found user config file
+    loaded_user_config = False
+    for config_path in unique_search_paths:
+        if config_path.is_file():
+            logger.info(f"Loading user configuration from: {config_path}")
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f: user_config = toml.load(f)
+                config = deep_merge(user_config, config); logger.debug("User config merged."); loaded_user_config = True; break
+            except Exception as e: logger.error(f"Error loading/merging user config '{config_path}': {e}. Skipping.")
+    if not loaded_user_config: logger.info("No user config file found or loaded. Using defaults.")
+
+    # Resolve relative model path (relative to the Main package)
+    doc_cfg = config.get("DOCLAYOUT_CONFIG", {}); model_path_str = doc_cfg.get("DOCLAYOUT_MODEL_PATH")
+    if model_path_str and not os.path.isabs(model_path_str):
+        script_dir = Path(__file__).parent.resolve() # Dir containing this config.py
+        resolved_path = (script_dir / model_path_str).resolve()
+        logger.debug(f"Resolved relative model path '{model_path_str}' to '{resolved_path}'")
+        doc_cfg["DOCLAYOUT_MODEL_PATH"] = str(resolved_path)
+
+    return config

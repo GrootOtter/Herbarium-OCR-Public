@@ -1,5 +1,5 @@
 # Main/image_processer.py
-
+import copy
 import cv2
 import numpy as np
 from PIL import Image, UnidentifiedImageError, ImageOps # Ensure ImageOps is imported
@@ -10,11 +10,9 @@ import fitz
 import io
 from pathlib import Path
 from typing import Dict
-from .config import OCR_CONFIG
 import time
 import sys
-from . import config as default_config_module
-from .herbarium_ocr import load_configuration
+from .config import load_configuration, OCR_CONFIG as DEFAULT_OCR_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +36,7 @@ def _initialize_tesseract(app_config: Dict):
 
     # --- Proceed only if import succeeded ---
     ocr_cfg = app_config.get('OCR_CONFIG', {})
-    tesseract_path = ocr_cfg.get("tesseract_cmd_path", OCR_CONFIG.get("tesseract_cmd_path"))
+    tesseract_path = ocr_cfg.get("tesseract_cmd_path", DEFAULT_OCR_CONFIG.get("tesseract_cmd_path"))
 
     if tesseract_path and os.path.exists(tesseract_path):
         pytesseract.pytesseract.tesseract_cmd = tesseract_path
@@ -182,7 +180,7 @@ class ImageProcessor:
             return image # Return original on error
 
 # --- Testing Function ---
-def main_test(input_path: str):
+def main_test():
     """Entry point for testing the image preprocessing pipeline via command line."""
     parser = argparse.ArgumentParser(
         description="Test Image Preprocessing Pipeline (Rotation + All Enhancements)",
@@ -221,11 +219,11 @@ def main_test(input_path: str):
     logger.info("--- Starting Preprocessing Test ---")
     # Load config primarily to get Tesseract path if set by user
     try:
-        app_config = load_configuration(default_config_module, custom_config_path=args.config)
+        app_config = load_configuration(custom_config_path=args.config)
     except Exception as cfg_err:
         logger.error(f"Failed to load config: {cfg_err}. Tesseract path might be incorrect if not in PATH.", exc_info=True)
         # Use default OCR_CONFIG as fallback if loading fails
-        app_config = {'OCR_CONFIG': getattr(default_config_module, 'OCR_CONFIG', {})}
+        app_config = {'OCR_CONFIG': copy.deepcopy(DEFAULT_OCR_CONFIG)}
 
     # Initialize Tesseract (always attempted in test)
     logger.info("NOTE: Test function always attempts Tesseract initialization.")

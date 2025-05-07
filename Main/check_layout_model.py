@@ -6,14 +6,11 @@ import sys
 import torch
 from doclayout_yolo import YOLOv10
 import argparse 
-import toml 
 from pathlib import Path 
-import copy 
 
 # --- Relative Imports ---
 # Import default config values and configuration loading logic
-from . import config as default_config_module
-from .herbarium_ocr import load_configuration # Reuse the loader from main script
+from .config import load_configuration
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -34,7 +31,7 @@ def main_check():
 
     # Load configuration using the shared function
     try:
-        app_config = load_configuration(default_config_module, custom_config_path=args.config)
+        app_config = load_configuration(custom_config_path=args.config)
         doc_cfg = app_config.get("DOCLAYOUT_CONFIG", {})
         doclayout_model_path = doc_cfg.get("DOCLAYOUT_MODEL_PATH")
         if not doclayout_model_path:

@@ -6,11 +6,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "herbarium-ocr"
-version = "0.1.0"
+version = "0.1.1"
 authors = [
   { name="Esen Zhou", email="zhouyixin231@mails.ucas.ac.cn" },
 ]
-description = "OCR tool for Central Eurasian botanical documents and labels using layout analysis and LLMs/APIs."
+description = "OCR tool for botanical documents using layout analysis and LLMs/OCR engines."
 readme = "README.en.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}

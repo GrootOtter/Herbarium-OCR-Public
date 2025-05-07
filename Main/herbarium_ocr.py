@@ -7,20 +7,19 @@ from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 import io
 import argparse
-import copy
 import sys
 import fitz  # PyMuPDF for handling PDF and DjVu files
 from PIL import Image, UnidentifiedImageError, ImageOps # Pillow for image manipulation
 from tqdm import tqdm # Progress bar for loops
 from doclayout_yolo import YOLOv10 # Layout detection model
 import torch # PyTorch for model loading and device management
-import toml # For parsing TOML configuration files
 import concurrent.futures # For parallel processing in batch mode
 import multiprocessing # For process management and shared state
 
 # --- Relative Imports ---
 # Import default config values and image processing utilities from the same package
-from . import config as default_config_module
+from .config import (load_configuration, OCR_CONFIG as DEFAULT_OCR_CONFIG,
+                     DEFAULT_RESIZE_MAX_DIMENSION, DEFAULT_JPEG_QUALITY)
 from .image_processer import ImageProcessor, _initialize_tesseract, TESSERACT_AVAILABLE
 
 # --- Import OCR Clients ---
@@ -50,103 +49,6 @@ active_ocr_client: Optional[Any] = None   # Holds the initialized OCR client ins
 # --- Initialize Image Processor ---
 # Create a single instance, as its methods are mostly stateless
 image_processor = ImageProcessor()
-
-# --- Configuration Loading ---
-def deep_merge(source: Dict, destination: Dict) -> Dict:
-    """Recursively merges source dict into destination dict (source overwrites destination)."""
-    for key, value in source.items():
-        if isinstance(value, dict):
-            # get node or create one
-            node = destination.setdefault(key, {})
-            if isinstance(node, dict):
-                # recurse
-                deep_merge(value, node)
-            else:
-                 # Overwrite destination if types mismatch (e.g., dict merging into non-dict)
-                 destination[key] = copy.deepcopy(value)
-        else:
-            destination[key] = value # Assign scalar value or list
-    return destination
-
-def load_configuration(default_config, custom_config_path: Optional[str] = None) -> Dict:
-    """
-    Loads default config from config.py and merges user settings from a TOML file.
-    Search order: command-line path -> user config dirs -> defaults.
-    Resolves relative layout model path relative to the Main package directory.
-    """
-    # Start with deep copies of defaults to avoid modifying the original module
-    config = {
-        "DOCLAYOUT_CONFIG": copy.deepcopy(getattr(default_config, 'DOCLAYOUT_CONFIG', {})),
-        "OCR_CONFIG": copy.deepcopy(getattr(default_config, 'OCR_CONFIG', {})),
-        "MODEL_CONFIGS": copy.deepcopy(getattr(default_config, 'MODEL_CONFIGS', {}))
-    }
-    logger.debug("Loaded default configuration structure.")
-
-    config_filename = "herbarium_ocr_config.toml"
-    search_paths = [] # List of potential config file paths
-
-    # 1. Check command-line path first
-    if custom_config_path:
-        cmd_path = Path(custom_config_path).resolve()
-        if cmd_path.is_file():
-            search_paths.append(cmd_path)
-            logger.debug(f"Added command line config path: {cmd_path}")
-        else:
-            logger.warning(f"--config file specified but not found: {custom_config_path}")
-
-    # 2. Check standard user config locations
-    # Unix-like (~/.config/...)
-    user_config_dir_unix = Path.home() / ".config" / "herbarium-ocr"
-    # Check if parent (.config) exists before adding path
-    if user_config_dir_unix.parent.exists():
-        search_paths.append(user_config_dir_unix / config_filename)
-    # Windows (%APPDATA%/...)
-    appdata_path = os.getenv('APPDATA')
-    if appdata_path:
-        user_config_dir_windows = Path(appdata_path) / "HerbariumOCR"
-        # Check if parent (%APPDATA%) exists before adding path
-        if user_config_dir_windows.parent.exists():
-             search_paths.append(user_config_dir_windows / config_filename)
-
-    # Deduplicate search paths while preserving order
-    unique_search_paths = []
-    seen_paths = set()
-    for p in search_paths:
-        if p not in seen_paths:
-            unique_search_paths.append(p)
-            seen_paths.add(p)
-    logger.debug(f"Effective config search paths: {unique_search_paths}")
-
-    # Load the first configuration file found
-    loaded_user_config = False
-    for config_path in unique_search_paths:
-        if config_path.is_file():
-            logger.info(f"Loading user configuration from: {config_path}")
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    user_config = toml.load(f)
-                # Merge user settings into the defaults (user settings take precedence)
-                config = deep_merge(user_config, config)
-                logger.debug("User configuration successfully merged.")
-                loaded_user_config = True
-                break # Stop after loading the first found file
-            except Exception as e:
-                logger.error(f"Error loading or merging user config '{config_path}': {e}. Skipping this file.")
-
-    if not loaded_user_config:
-        logger.info("No user configuration file found or loaded. Using default settings from config.py.")
-
-    # Resolve relative DOCLAYOUT_MODEL_PATH to be relative to this script's package dir
-    doc_cfg = config.get("DOCLAYOUT_CONFIG", {})
-    model_path_str = doc_cfg.get("DOCLAYOUT_MODEL_PATH")
-    if model_path_str and not os.path.isabs(model_path_str):
-        script_dir = Path(__file__).parent.resolve()
-        resolved_path = (script_dir / model_path_str).resolve()
-        logger.debug(f"Resolved relative model path '{model_path_str}' to '{resolved_path}'")
-        # Update the path in the loaded config dictionary
-        doc_cfg["DOCLAYOUT_MODEL_PATH"] = str(resolved_path)
-
-    return config
 
 # --- Unified OCR Call ---
 def call_ocr(
@@ -493,8 +395,8 @@ def process_single_file_worker(
         if model_type == "openai_compatible":
             api_key = os.getenv(model_config.get("api_key_env",""));
             if not api_key: raise ValueError(f"Env var {model_config.get('api_key_env')} not set for {model_choice}")
-            resize_dim = model_config.get("max_dimension", ocr_cfg.get("max_dimension"))
-            jpeg_q = model_config.get("jpeg_quality", ocr_cfg.get("jpeg_quality"))
+            resize_dim = model_config.get("max_dimension", DEFAULT_RESIZE_MAX_DIMENSION)
+            jpeg_q = model_config.get("jpeg_quality", DEFAULT_JPEG_QUALITY)
             active_ocr_client = OpenAICompatibleClient(api_key=api_key, base_url=model_config.get("base_url"), model_id=model_config.get("model_id"), rpm_limit=model_config.get("rpm_limit"), max_dimension=resize_dim, jpeg_quality=jpeg_q)
         elif model_type == "xfyun_http_ocr":
             app_id = os.getenv(model_config.get("app_id_env","")); api_key = os.getenv(model_config.get("api_key_env","")); api_secret = os.getenv(model_config.get("api_secret_env",""));
@@ -705,7 +607,7 @@ def main():
 
     # Load Configuration
     try:
-        app_config = load_configuration(default_config_module, custom_config_path=args.config)
+        app_config = load_configuration(custom_config_path=args.config)
         app_config['_model_choice'] = args.model; app_config['_log_level'] = log_level;
     except Exception as cfg_err: logger.critical(f"Failed load config: {cfg_err}", exc_info=True); sys.exit(1)
 
@@ -781,8 +683,8 @@ def main():
             try:
                 # Initialize client (pass target_device to local models)
                 if model_type == "openai_compatible":
-                    resize_dim = model_config.get("max_dimension", ocr_cfg.get("max_dimension"))
-                    jpeg_q = model_config.get("jpeg_quality", ocr_cfg.get("jpeg_quality"))
+                    resize_dim = model_config.get("max_dimension", DEFAULT_RESIZE_MAX_DIMENSION)
+                    jpeg_q = model_config.get("jpeg_quality", DEFAULT_JPEG_QUALITY)
                     active_ocr_client = OpenAICompatibleClient(api_key=os.getenv(model_config["api_key_env"]), base_url=model_config.get("base_url"), model_id=model_config.get("model_id"), rpm_limit=model_config.get("rpm_limit"), max_dimension=resize_dim, jpeg_quality=jpeg_q)
                 elif model_type == "xfyun_http_ocr":
                      active_ocr_client = XFYunHttpOcrClient(app_id=os.getenv(model_config["app_id_env"]), api_key=os.getenv(model_config["api_key_env"]), api_secret=os.getenv(model_config["api_secret_env"]), api_url=model_config.get("api_url"), service_key=model_config.get("service_key"), param_type=model_config.get("param_type"), param_value=model_config.get("param_value"), rpm_limit=model_config.get("rpm_limit", 60), max_dimension=model_config.get("max_dimension", 1500), jpeg_quality=model_config.get("jpeg_quality", 85))
